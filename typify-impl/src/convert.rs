@@ -748,11 +748,25 @@ impl TypeSpace {
             // f64 here, but we're already constrained by the schemars
             // representation so ... it's probably the best we can do at
             // the moment.
-            match (default.as_f64(), min, max) {
-                (Some(_), None, None) => Some(()),
-                (Some(value), None, Some(fmax)) if value <= fmax => Some(()),
-                (Some(value), Some(fmin), None) if value >= fmin => Some(()),
-                (Some(value), Some(fmin), Some(fmax)) if value >= fmin && value <= fmax => Some(()),
+            match (default.as_f64(), min, max, multiple) {
+                (Some(_), None, None, None) => Some(()),
+                (Some(value), None, None, Some(m)) if value % m == 0.0 => Some(()),
+                (Some(value), None, Some(fmax), None) if value <= fmax => Some(()),
+                (Some(value), None, Some(fmax), Some(m)) if value <= fmax && value % m == 0.0 => {
+                    Some(())
+                }
+                (Some(value), Some(fmin), None, None) if value >= fmin => Some(()),
+                (Some(value), Some(fmin), None, Some(m)) if value >= fmin && value % m == 0.0 => {
+                    Some(())
+                }
+                (Some(value), Some(fmin), Some(fmax), None) if value >= fmin && value <= fmax => {
+                    Some(())
+                }
+                (Some(value), Some(fmin), Some(fmax), Some(m))
+                    if value >= fmin && value <= fmax && value % m == 0.0 =>
+                {
+                    Some(())
+                }
                 _ => None,
             }
             .ok_or(Error::InvalidValue)?;
