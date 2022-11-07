@@ -1234,9 +1234,10 @@ fn strings_to_derives<'a>(
     derive_set: BTreeSet<&'a str>,
     extra_derives: &'a [String],
 ) -> impl Iterator<Item = TokenStream> + 'a {
-    derive_set
+    let mut combined_derives = derive_set.clone();
+    combined_derives.extend(extra_derives.iter().map(String::as_str));
+    combined_derives
         .into_iter()
-        .chain(extra_derives.iter().map(String::as_str))
         .map(|derive| {
             syn::parse_str::<syn::Path>(derive)
                 .unwrap()
