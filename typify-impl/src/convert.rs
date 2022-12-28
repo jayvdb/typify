@@ -9,8 +9,8 @@ use crate::type_entry::{
 use crate::util::{all_mutually_exclusive, none_or_single, recase, Case, StringValidator};
 use log::info;
 use schemars::schema::{
-    ArrayValidation, InstanceType, Metadata, ObjectValidation, Schema, SchemaObject, SingleOrVec,
-    StringValidation, SubschemaValidation,
+    ArrayValidation, InstanceType, Metadata, NumberValidation, ObjectValidation, Schema,
+    SchemaObject, SingleOrVec, StringValidation, SubschemaValidation,
 };
 
 use crate::util::get_type_name;
@@ -163,7 +163,7 @@ impl TypeSpace {
                 reference: None,
                 extensions: _,
             } if single.as_ref() == &InstanceType::Integer => {
-                self.convert_num(metadata, validation, format, true)
+                self.convert_num(type_name, metadata, validation, format, true)
             }
 
             // Numbers
@@ -181,7 +181,7 @@ impl TypeSpace {
                 reference: None,
                 extensions: _,
             } if single.as_ref() == &InstanceType::Number => {
-                self.convert_num(metadata, validation, format, false)
+                self.convert_num(type_name, metadata, validation, format, false)
             }
 
             // Boolean
@@ -664,14 +664,15 @@ impl TypeSpace {
     }
 
     fn convert_num<'a>(
-        &self,
+        &mut self,
+        type_name: Name,
         metadata: &'a Option<Box<Metadata>>,
         validation: &Option<Box<schemars::schema::NumberValidation>>,
         format: &Option<String>,
         is_int: bool,
     ) -> Result<(TypeEntry, &'a Option<Box<Metadata>>)> {
         let shifter = if is_int { 1.0 } else { f64::EPSILON };
-        let (mut min, mut max, multiple) = if let Some(validation) = validation {
+        let (min, max, multiple) = if let Some(validation) = validation {
             let min = match (&validation.minimum, &validation.exclusive_minimum) {
                 (None, None) => None,
                 (None, Some(value)) => Some(value + shifter),
@@ -709,10 +710,7 @@ impl TypeSpace {
                 ("uint64", "u64", u64::MIN as f64, u64::MAX as f64),
             ]
         } else {
-            &[
-                ("float", "f32", f32::MIN as f64, f32::MAX as f64),
-                ("double", "f64", f64::MIN, f64::MAX),
-            ]
+            &[("f64", "f64", f64::MIN, f64::MAX)]
         };
 
         if let Some(format) = format {
@@ -742,13 +740,6 @@ impl TypeSpace {
                     } else {
                         (TypeEntry::new_float(ty), metadata)
                     });
-                }
-
-                if min.is_none() {
-                    min = Some(*imin);
-                }
-                if max.is_none() {
-                    max = Some(*imax);
                 }
             }
         }
@@ -810,23 +801,63 @@ impl TypeSpace {
             (None, None) => None,
         };
 
-        // TODO we should do something with `multiple`
-        if let Some(ty) = maybe_type {
-            Ok(if is_int {
-                (TypeEntry::new_integer(ty), metadata)
-            } else {
-                (TypeEntry::new_float(ty), metadata)
-            })
-        } else {
-            // TODO we could construct a type that itself enforces the various
-            // bounds.
-            // TODO failing that, we should find the type that most tightly
-            // matches these bounds.
-            Ok(if is_int {
-                (TypeEntry::new_integer("i64"), metadata)
-            } else {
-                (TypeEntry::new_float("f64"), metadata)
-            })
+        match (min, max, multiple) {
+            (None, None, None) => {
+                return Ok(if is_int {
+                    (
+                        TypeEntry::new_integer(if let Some(ty) = maybe_type {
+                            ty
+                        } else {
+                            "i64".to_string()
+                        }),
+                        metadata,
+                    )
+                } else {
+                    (
+                        TypeEntry::new_float(if let Some(ty) = maybe_type {
+                            ty
+                        } else {
+                            "f64".to_string()
+                        }),
+                        metadata,
+                    )
+                });
+            }
+            _ => {
+                let type_entry = if is_int {
+                    TypeEntryDetails::Integer(if let Some(ty) = maybe_type {
+                        ty
+                    } else {
+                        "i64".to_string()
+                    })
+                    .into()
+                } else {
+                    TypeEntryDetails::Integer(if let Some(ty) = maybe_type {
+                        ty
+                    } else {
+                        "f64".to_string()
+                    })
+                    .into()
+                };
+                let type_id = self.assign_type(type_entry);
+
+                return Ok((
+                    TypeEntryNewtype::from_metadata_with_number_validation(
+                        type_name,
+                        metadata,
+                        type_id,
+                        &(NumberValidation {
+                            maximum: max,
+                            multiple_of: multiple,
+                            exclusive_maximum: None,
+                            minimum: min,
+                            exclusive_minimum: None,
+                        }),
+                    )
+                    .into(),
+                    metadata,
+                ));
+            }
         }
     }
 
@@ -1472,7 +1503,6 @@ mod tests {
     helper_test!("int", NonZeroU16);
     helper_test!("int", NonZeroU32);
     helper_test!("int", NonZeroU64);
-    helper_test!("number", f32);
     helper_test!("number", f64);
 
     #[test]
@@ -1647,268 +1677,6 @@ mod tests {
     }
 
     #[test]
-<<<<<<< HEAD
-=======
-    fn test_multiple_of_default_pass() {
-        let schema = SchemaObject {
-            instance_type: Some(InstanceType::Integer.into()),
-            metadata: Some(
-                Metadata {
-                    default: Some(json!(25_u32)),
-                    ..Default::default()
-                }
-                .into(),
-            ),
-            number: Some(
-                NumberValidation {
-                    multiple_of: Some(5.0),
-                    ..Default::default()
-                }
-                .into(),
-            ),
-            ..Default::default()
-        };
-
-        let mut type_space = TypeSpace::default();
-        match type_space.convert_schema_object(Name::Unknown, &schema) {
-            Ok(_) => (),
-            _ => panic!("unexpected result"),
-        };
-    }
-
-    #[test]
-    fn test_multiple_of_default_fail() {
-        let schema = SchemaObject {
-            instance_type: Some(InstanceType::Integer.into()),
-            metadata: Some(
-                Metadata {
-                    default: Some(json!(25_u32)),
-                    ..Default::default()
-                }
-                .into(),
-            ),
-            number: Some(
-                NumberValidation {
-                    multiple_of: Some(6.0),
-                    ..Default::default()
-                }
-                .into(),
-            ),
-            ..Default::default()
-        };
-
-        let mut type_space = TypeSpace::default();
-        match type_space.convert_schema_object(Name::Unknown, &schema) {
-            Err(Error::InvalidValue) => (),
-            _ => panic!("unexpected result"),
-        }
-    }
-
-    #[test]
-    fn test_some_ints() {
-        #[allow(dead_code)]
-        #[derive(Schema)]
-        struct Sub10Primes(u32);
-        impl JsonSchema for Sub10Primes {
-            fn schema_name() -> String {
-                "Sub10Primes".to_string()
-            }
-
-            fn json_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
-                schemars::schema::SchemaObject {
-                    instance_type: Some(schemars::schema::InstanceType::Integer.into()),
-                    format: Some("uint".to_string()),
-                    enum_values: Some(vec![json!(2_u32), json!(3_u32), json!(5_u32), json!(7_u32)]),
-                    number: Some(
-                        schemars::schema::NumberValidation {
-                            ..Default::default()
-                        }
-                        .into(),
-                    ),
-                    ..Default::default()
-                }
-                .into()
-            }
-        }
-
-        let (type_space, type_id) = get_type::<Sub10Primes>();
-        let type_entry = type_space.id_to_entry.get(&type_id).unwrap();
-
-        let mut output = OutputSpace::default();
-        type_entry.output(&type_space, &mut output);
-        let actual = output.into_stream();
-        let expected = quote! {
-            #[derive(Clone, Debug, Deserialize, Serialize)]
-            pub struct Sub10Primes(u32);
-
-            impl std::ops::Deref for Sub10Primes {
-                type Target = u32;
-                fn deref(&self) -> &Self::Target {
-                    &self.0
-                }
-            }
-
-            impl std::convert::TryFrom<u32> for Sub10Primes {
-                type Error = &'static str;
-
-                fn try_from(value: u32) -> Result<Self, Self::Error> {
-                    if ![
-                        2_u32,
-                        3_u32,
-                        5_u32,
-                        7_u32,
-                    ].contains(&value) {
-                        Err("invalid value")
-                    } else {
-                        Ok(Self(value))
-                    }
-                }
-            }
-        };
-        assert_eq!(actual.to_string(), expected.to_string());
-    }
-
-    #[test]
-    fn test_some_numbers() {
-        #[allow(dead_code)]
-        #[derive(Schema)]
-        struct Sub10Primes(f64);
-        impl JsonSchema for Sub10Primes {
-            fn schema_name() -> String {
-                "Sub10Primes".to_string()
-            }
-
-            fn json_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
-                schemars::schema::SchemaObject {
-                    instance_type: Some(schemars::schema::InstanceType::Number.into()),
-                    format: Some("f64".to_string()),
-                    enum_values: Some(vec![json!(2_f64), json!(3_f64), json!(5_f64), json!(7_f64)]),
-                    number: Some(
-                        schemars::schema::NumberValidation {
-                            ..Default::default()
-                        }
-                        .into(),
-                    ),
-                    ..Default::default()
-                }
-                .into()
-            }
-        }
-
-        let (type_space, type_id) = get_type::<Sub10Primes>();
-        let type_entry = type_space.id_to_entry.get(&type_id).unwrap();
-
-        let mut output = OutputSpace::default();
-        type_entry.output(&type_space, &mut output);
-        let actual = output.into_stream();
-        let expected = quote! {
-            #[derive(Clone, Debug, Deserialize, Serialize)]
-            pub struct Sub10Primes(f64);
-
-            impl std::ops::Deref for Sub10Primes {
-                type Target = f64;
-                fn deref(&self) -> &Self::Target {
-                    &self.0
-                }
-            }
-
-            impl std::convert::TryFrom<f64> for Sub10Primes {
-                type Error = &'static str;
-
-                fn try_from(value: f64) -> Result<Self, Self::Error> {
-                    if ![
-                        2.0_f64,
-                        3.0_f64,
-                        5.0_f64,
-                        7.0_f64,
-                    ].contains(&value) {
-                        Err("invalid value")
-                    } else {
-                        Ok(Self(value))
-                    }
-                }
-            }
-        };
-        assert_eq!(actual.to_string(), expected.to_string());
-    }
-
-    #[test]
-    fn test_pattern_string() {
-        #[allow(dead_code)]
-        #[derive(Schema)]
-        struct PatternString(String);
-        impl JsonSchema for PatternString {
-            fn schema_name() -> String {
-                "PatternString".to_string()
-            }
-
-            fn json_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
-                schemars::schema::SchemaObject {
-                    instance_type: Some(schemars::schema::InstanceType::String.into()),
-                    string: Some(
-                        schemars::schema::StringValidation {
-                            pattern: Some("xx".to_string()),
-                            ..Default::default()
-                        }
-                        .into(),
-                    ),
-                    ..Default::default()
-                }
-                .into()
-            }
-        }
-
-        let (type_space, _) = get_type::<PatternString>();
-        let actual = type_space.to_stream();
-        let expected = quote! {
-            #[derive(Clone, Debug, Serialize)]
-            pub struct PatternString(String);
-            impl std::ops::Deref for PatternString {
-                type Target = String;
-                fn deref(&self) -> &Self::Target {
-                    &self.0
-                }
-            }
-            impl std::convert::TryFrom<&str> for PatternString {
-                type Error = &'static str;
-                fn try_from(value: &str) -> Result<Self, Self::Error> {
-                    if regress::Regex::new("xx").unwrap().find(value).is_none() {
-                        return Err("doesn't match pattern \"xx\"");
-                    }
-                    Ok(Self(value.to_string()))
-                }
-            }
-            impl std::convert::TryFrom<&String> for PatternString {
-                type Error = &'static str;
-                fn try_from(value: &String) -> Result<Self, Self::Error> {
-                    Self::try_from(value.as_str())
-                }
-            }
-            impl std::convert::TryFrom<String> for PatternString {
-                type Error = &'static str;
-                fn try_from(value: String) -> Result<Self, Self::Error> {
-                    Self::try_from(value.as_str())
-                }
-            }
-            impl<'de> serde::Deserialize<'de> for PatternString {
-                fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-                where
-                    D: serde::Deserializer<'de>,
-                {
-                    Self::try_from(String::deserialize(deserializer)?)
-                        .map_err(|e| {
-                            <D::Error as serde::de::Error>::custom(
-                                e.to_string(),
-                            )
-                        })
-                }
-            }
-        };
-        assert_eq!(actual.to_string(), expected.to_string());
-    }
-
-    #[test]
->>>>>>> 04f2c55 (refactor number and int to use the same converter so that they both get the same checks)
     fn test_null() {
         let schema_json = r#"
         {

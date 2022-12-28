@@ -23,10 +23,13 @@ import_types!(
 
 #[test]
 fn test_main() {
-    main()
+    match main() {
+        Ok(it) => it,
+        Err(_) => (),
+    };
 }
 
-fn main() {
+fn main() -> Result<(), String> {
     let veg = Vegetable {
         veggie_name: String::from("carrots"),
         veggie_like: true,
@@ -34,8 +37,10 @@ fn main() {
     let veggies = Veggies {
         fruits: vec![String::from("apple"), String::from("mango")],
         vegetables: vec![veg],
+        id_num: Some(VeggiesIdNum::try_from(25)?),
     };
     println!("{:?}", veggies);
     let fov = FruitOrVeg::Fruit(MyFruit { seeds: () });
     println!("{:?}", fov);
+    Ok(())
 }
